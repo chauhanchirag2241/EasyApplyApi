@@ -28,16 +28,25 @@ var databaseResp = await cosmosClient.CreateDatabaseIfNotExistsAsync(cosmosDbNam
 await databaseResp.Database.CreateContainerIfNotExistsAsync(id: containerName, partitionKeyPath: "/id", throughput: 400);
 
 // **CORS policy for Angular frontend**
+//builder.Services.AddCors(options =>
+//{
+//    options.AddPolicy("AllowAngularApp", policy =>
+//    {
+//        policy.WithOrigins(
+//            "http://localhost:4200", // local dev
+//            "https://jolly-mushroom-0f9150400.1.azurestaticapps.net" // deployed Angular
+//        )
+//        .AllowAnyHeader()
+//        .AllowAnyMethod();
+//    });
+//});
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAngularApp", policy =>
     {
-        policy.WithOrigins(
-            "http://localhost:4200", // local dev
-            "https://jolly-mushroom-0f9150400.1.azurestaticapps.net" // deployed Angular
-        )
-        .AllowAnyHeader()
-        .AllowAnyMethod();
+        policy.AllowAnyOrigin()
+              .AllowAnyHeader()
+              .AllowAnyMethod();
     });
 });
 

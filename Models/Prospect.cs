@@ -19,8 +19,6 @@ namespace EasyApplyAPI.Models
         [JsonPropertyName("sentDate")]
         public DateTime? SentDate { get; set; }
 
-        [JsonPropertyName("hangfireJobId")]
-        public string? HangfireJobId { get; set; }
 
         [JsonPropertyName("companyName")]
         public string? CompanyName { get; set; }

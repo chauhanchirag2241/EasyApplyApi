@@ -2,8 +2,6 @@ using EasyApplyAPI.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Linq;
-using Hangfire;
-using EasyApplyAPI.Jobs;
 
 namespace EasyApplyAPI.Controllers
 {
@@ -32,13 +30,6 @@ namespace EasyApplyAPI.Controllers
             
             await GetContainer().CreateItemAsync(campaign, new PartitionKey(campaign.Id));
             
-            if (campaign.ScheduleType == "Daily" && !string.IsNullOrEmpty(campaign.ScheduledTimeOfDay))
-            {
-                var timeParts = campaign.ScheduledTimeOfDay.Split(':');
-                int hour = int.Parse(timeParts[0]);
-                int minute = int.Parse(timeParts[1]);
-                RecurringJob.AddOrUpdate<CampaignDailyProcessor>(campaign.Id, x => x.ProcessDaily(campaign.Id), Cron.Daily(hour, minute));
-            }
             return Ok(campaign);
         }
 
@@ -89,92 +80,18 @@ namespace EasyApplyAPI.Controllers
                 campaign.Subject = updateData.Subject;
                 campaign.Body = updateData.Body;
 
-                bool scheduleChanged = false;
-                
                 if (updateData.ScheduleType == "Daily")
                 {
-                    if (campaign.ScheduleType != "Daily" || campaign.ScheduledTimeOfDay != updateData.ScheduledTimeOfDay)
-                    {
-                        scheduleChanged = true;
-                    }
                     campaign.ScheduleType = "Daily";
                     campaign.ScheduledTimeOfDay = updateData.ScheduledTimeOfDay;
                 }
                 else
                 {
-                    if (campaign.ScheduleType != "Once" || campaign.ScheduledTime != updateData.ScheduledTime)
-                    {
-                        scheduleChanged = true;
-                    }
                     campaign.ScheduleType = "Once";
                     campaign.ScheduledTime = updateData.ScheduledTime;
                 }
                 
                 await container.ReplaceItemAsync(campaign, id, new PartitionKey(id));
-
-                if (scheduleChanged)
-                {
-                    if (campaign.ScheduleType == "Daily")
-                    {
-                         // Remove any potential old pending jobs we had if we switched to Daily from Once
-                         var query = container.GetItemLinqQueryable<Prospect>(true)
-                             .Where(p => p.Type == "Prospect" && p.CampaignId == id && p.Status == "Pending")
-                             .ToFeedIterator();
-                         while(query.HasMoreResults)
-                         {
-                             foreach(var p in await query.ReadNextAsync())
-                             {
-                                 if (p.HangfireJobId != null) 
-                                 {
-                                     BackgroundJob.Delete(p.HangfireJobId);
-                                     p.HangfireJobId = null;
-                                     await container.ReplaceItemAsync(p, p.Id, new PartitionKey(p.Id));
-                                 }
-                             }
-                         }
-
-                         var timeParts = campaign.ScheduledTimeOfDay!.Split(':');
-                         int hour = int.Parse(timeParts[0]);
-                         int minute = int.Parse(timeParts[1]);
-                         RecurringJob.AddOrUpdate<CampaignDailyProcessor>(campaign.Id, x => x.ProcessDaily(campaign.Id), Cron.Daily(hour, minute));
-                    }
-                    else
-                    {
-                         RecurringJob.RemoveIfExists(campaign.Id);
-
-                         // Find all pending prospects and reschedule them
-                         var query = container.GetItemLinqQueryable<Prospect>(true)
-                             .Where(p => p.Type == "Prospect" && p.CampaignId == id && p.Status == "Pending")
-                             .ToFeedIterator();
-
-                         var sendDelay = campaign.ScheduledTime - DateTime.UtcNow;
-
-                         while (query.HasMoreResults)
-                         {
-                             foreach (var prospect in await query.ReadNextAsync())
-                             {
-                                 // Delete old job
-                                 if (prospect.HangfireJobId != null)
-                                 {
-                                     BackgroundJob.Delete(prospect.HangfireJobId);
-                                 }
-
-                                 // Schedule new job
-                                 if (sendDelay.TotalMinutes <= 0)
-                                 {
-                                     prospect.HangfireJobId = BackgroundJob.Enqueue<SendEmailJob>(x => x.ProcessCampaignEmail(campaign.Id, prospect.Id));
-                                 }
-                                 else
-                                 {
-                                     prospect.HangfireJobId = BackgroundJob.Schedule<SendEmailJob>(x => x.ProcessCampaignEmail(campaign.Id, prospect.Id), sendDelay);
-                                 }
-                                 
-                                 // Save updated prospect
-                                 await container.ReplaceItemAsync(prospect, prospect.Id, new PartitionKey(prospect.Id));
-                             }
-                         }
-                    }
-                }
 
                 return Ok(campaign);
             }
@@ -189,8 +106,7 @@ namespace EasyApplyAPI.Controllers
         {
             var container = GetContainer();
             try {
-                RecurringJob.RemoveIfExists(id);
-                // Delete all prospects and cancel jobs
+                // Delete all prospects
                 var query = container.GetItemLinqQueryable<Prospect>(true)
                     .Where(p => p.Type == "Prospect" && p.CampaignId == id)
                     .ToFeedIterator();
@@ -199,10 +115,6 @@ namespace EasyApplyAPI.Controllers
                 {
                     foreach (var prospect in await query.ReadNextAsync())
                     {
-                        if (prospect.HangfireJobId != null)
-                        {
-                            BackgroundJob.Delete(prospect.HangfireJobId);
-                        }
                         await container.DeleteItemAsync<Prospect>(prospect.Id, new PartitionKey(prospect.Id));
                     }
                 }

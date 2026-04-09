@@ -1,5 +1,4 @@
 using Microsoft.Azure.Cosmos;
-using Hangfire;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -23,25 +22,10 @@ var cosmosClient = new CosmosClient(cosmosEndpoint, cosmosKey, new CosmosClientO
 
 builder.Services.AddSingleton(cosmosClient);
 builder.Services.AddTransient<EasyApplyAPI.Services.IEmailService, EasyApplyAPI.Services.EmailService>();
+builder.Services.AddTransient<EasyApplyAPI.Services.IEmailProcessorService, EasyApplyAPI.Services.EmailProcessorService>();
 
 var databaseResp = await cosmosClient.CreateDatabaseIfNotExistsAsync(cosmosDbName);
 await databaseResp.Database.CreateContainerIfNotExistsAsync(id: containerName, partitionKeyPath: "/id", throughput: 400);
-
-// Hangfire setup
-builder.Services.AddHangfire(configuration => configuration
-    .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
-    .UseSimpleAssemblyNameTypeSerializer()
-    .UseRecommendedSerializerSettings()
-    .UseSqlServerStorage(builder.Configuration.GetConnectionString("HangfireConnection"), new Hangfire.SqlServer.SqlServerStorageOptions
-    {
-        CommandBatchMaxTimeout = TimeSpan.FromMinutes(5),
-        SlidingInvisibilityTimeout = TimeSpan.FromMinutes(5),
-        QueuePollInterval = TimeSpan.Zero,
-        UseRecommendedIsolationLevel = true,
-        DisableGlobalLocks = true
-    }));
-
-builder.Services.AddHangfireServer();
 
 // **CORS policy for Angular frontend**
 builder.Services.AddCors(options =>
@@ -72,12 +56,6 @@ app.UseHttpsRedirection();
 app.UseCors("AllowAngularApp");
 
 app.UseAuthorization();
-
-// Hangfire Dashboard (optional: secure this for production)
-app.UseHangfireDashboard("/hangfire", new DashboardOptions
-{
-    // Default access for local setup
-});
 
 app.MapControllers();
 

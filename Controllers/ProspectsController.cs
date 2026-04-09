@@ -1,6 +1,4 @@
 using EasyApplyAPI.Models;
-using EasyApplyAPI.Jobs;
-using Hangfire;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Linq;
@@ -42,13 +40,8 @@ namespace EasyApplyAPI.Controllers
         {
             var container = GetContainer();
 
-            // Get Campaign
             try
             {
-                var campaignResp = await container.ReadItemAsync<Campaign>(request.CampaignId, new PartitionKey(request.CampaignId));
-                var campaign = campaignResp.Resource;
-
-                // Group by email to ensure uniqueness in the current batch block, taking first instance
                 var uniqueContacts = request.Contacts
                     .Where(c => !string.IsNullOrWhiteSpace(c.Email))
                     .GroupBy(c => c.Email.Trim().ToLower())
@@ -83,23 +76,10 @@ namespace EasyApplyAPI.Controllers
                         Status = "Pending"
                     };
 
-                    if (campaign.ScheduleType == "Once")
-                    {
-                        var sendDelay = campaign.ScheduledTime - DateTime.UtcNow;
-                        if (sendDelay.TotalMinutes <= 0)
-                        {
-                            prospect.HangfireJobId = BackgroundJob.Enqueue<SendEmailJob>(x => x.ProcessCampaignEmail(campaign.Id, prospect.Id));
-                        }
-                        else
-                        {
-                            prospect.HangfireJobId = BackgroundJob.Schedule<SendEmailJob>(x => x.ProcessCampaignEmail(campaign.Id, prospect.Id), sendDelay);
-                        }
-                    }
-
                     await container.CreateItemAsync(prospect, new PartitionKey(prospect.Id));
                     count++;
                 }
-                return Ok(new { Message = $"Added {count} prospects and scheduled their emails." });
+                return Ok(new { Message = $"Added {count} prospects." });
             }
             catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
@@ -149,12 +129,6 @@ namespace EasyApplyAPI.Controllers
             var container = GetContainer();
             try
             {
-                var existing = await container.ReadItemAsync<Prospect>(id, new PartitionKey(id));
-                if (existing.Resource.HangfireJobId != null)
-                {
-                    BackgroundJob.Delete(existing.Resource.HangfireJobId);
-                }
-
                 await container.DeleteItemAsync<Prospect>(id, new PartitionKey(id));
                 return Ok();
             }
@@ -162,8 +136,8 @@ namespace EasyApplyAPI.Controllers
             {
                 return NotFound();
             }
-          
         }
+
         [HttpPost("{id}/{campaignId}/send")]
         public async Task<IActionResult> SendNow(string id, string campaignId)
         {
@@ -174,13 +148,6 @@ namespace EasyApplyAPI.Controllers
                 var prospect = existing.Resource;
 
                 if (prospect.CampaignId != campaignId) return BadRequest("Campaign mismatch");
-
-                if (prospect.HangfireJobId != null)
-                {
-                    BackgroundJob.Delete(prospect.HangfireJobId);
-                }
-
-                prospect.HangfireJobId = BackgroundJob.Enqueue<SendEmailJob>(x => x.ProcessCampaignEmail(campaignId, prospect.Id));
 
                 prospect.Status = "Pending";
 

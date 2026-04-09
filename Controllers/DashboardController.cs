@@ -2,6 +2,7 @@ using EasyApplyAPI.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Linq;
+using EasyApplyAPI.Services;
 
 namespace EasyApplyAPI.Controllers
 {
@@ -11,22 +12,31 @@ namespace EasyApplyAPI.Controllers
     {
         private readonly CosmosClient _cosmosClient;
         private readonly IConfiguration _configuration;
+        private readonly IEmailProcessorService _emailProcessorService;
 
-        public DashboardController(CosmosClient cosmosClient, IConfiguration configuration)
+        public DashboardController(CosmosClient cosmosClient, IConfiguration configuration, IEmailProcessorService emailProcessorService)
         {
             _cosmosClient = cosmosClient;
             _configuration = configuration;
+            _emailProcessorService = emailProcessorService;
         }
 
         private Container GetContainer() => _cosmosClient.GetContainer(
             _configuration["CosmosDb:DatabaseName"],
             _configuration["CosmosDb:ContainerName"]);
 
+        [HttpPost("execute-all")]
+        public IActionResult ExecuteAll()
+        {
+            _ = Task.Run(() => _emailProcessorService.ProcessAllPendingEmailsAsync());
+            return Accepted(new { Message = "Email processing started in the background." });
+        }
+
         [HttpGet("stats")]
         public async Task<IActionResult> GetStats()
         {
             var container = GetContainer();
-            
+            // ... (rest of the existing stats code)
             var query = container.GetItemLinqQueryable<Prospect>(true)
                 .Where(p => p.Type == "Prospect");
 
@@ -57,11 +67,6 @@ namespace EasyApplyAPI.Controllers
                                                .Select(p => p.SentDate)
                                                .FirstOrDefault();
 
-            DateTime? nextJobScheduled = allCampaigns.Where(c => c.ScheduledTime > DateTime.UtcNow)
-                                                     .OrderBy(c => c.ScheduledTime)
-                                                     .Select(c => c.ScheduledTime)
-                                                     .FirstOrDefault();
-
             var stats = new
             {
                 Total = allProspects.Count,
@@ -69,8 +74,7 @@ namespace EasyApplyAPI.Controllers
                 Sent = allProspects.Count(p => p.Status == "Sent"),
                 Failed = allProspects.Count(p => p.Status == "Failed"),
                 RecentSent = allProspects.Where(p => p.Status == "Sent").OrderByDescending(p => p.SentDate).Take(10),
-                LastJobRun = lastJobRun == default ? (DateTime?)null : lastJobRun,
-                NextJobScheduled = nextJobScheduled == default ? (DateTime?)null : nextJobScheduled
+                LastJobRun = lastJobRun == default ? (DateTime?)null : lastJobRun
             };
 
             return Ok(stats);

@@ -3,10 +3,11 @@ using Hangfire;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
+// Add services
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 
+// Cosmos DB setup
 var cosmosEndpoint = builder.Configuration["CosmosDb:EndpointUri"]!;
 var cosmosKey = builder.Configuration["CosmosDb:PrimaryKey"]!;
 var cosmosDbName = builder.Configuration["CosmosDb:DatabaseName"]!;
@@ -20,18 +21,13 @@ var cosmosClient = new CosmosClient(cosmosEndpoint, cosmosKey, new CosmosClientO
     }
 });
 
-// Configure Singleton Cosmos DB Client.
 builder.Services.AddSingleton(cosmosClient);
-
-// Register Email Services
 builder.Services.AddTransient<EasyApplyAPI.Services.IEmailService, EasyApplyAPI.Services.EmailService>();
 
-// Wait for Database and Container to ensure they exist.
 var databaseResp = await cosmosClient.CreateDatabaseIfNotExistsAsync(cosmosDbName);
 await databaseResp.Database.CreateContainerIfNotExistsAsync(id: containerName, partitionKeyPath: "/id", throughput: 400);
 
-// Configure Hangfire with Azure SQL
-var hangfireConnCheck = builder.Configuration.GetConnectionString("HangfireConnection");
+// Hangfire setup
 builder.Services.AddHangfire(configuration => configuration
     .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
     .UseSimpleAssemblyNameTypeSerializer()
@@ -47,37 +43,41 @@ builder.Services.AddHangfire(configuration => configuration
 
 builder.Services.AddHangfireServer();
 
-// Configure CORS for Angular Frontend
+// **CORS policy for Angular frontend**
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowAngularApp",
-        policy => policy.WithOrigins(
-                        "http://localhost:4200",
-                        "https://jolly-mushroom-0f9150400.1.azurestaticapps.net")
-                        .AllowAnyHeader()
-                        .AllowAnyMethod());
+    options.AddPolicy("AllowAngularApp", policy =>
+    {
+        policy.WithOrigins(
+            "http://localhost:4200", // local dev
+            "https://jolly-mushroom-0f9150400.1.azurestaticapps.net" // deployed Angular
+        )
+        .AllowAnyHeader()
+        .AllowAnyMethod();
+    });
 });
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
+// Development tools
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
 }
 
+// **Order matters here**
 app.UseHttpsRedirection();
 
-// Enable CORS
+// **CORS MUST come before Authorization and endpoint mapping**
 app.UseCors("AllowAngularApp");
 
-// Enable Hangfire Dashboard
+app.UseAuthorization();
+
+// Hangfire Dashboard (optional: secure this for production)
 app.UseHangfireDashboard("/hangfire", new DashboardOptions
 {
-    // Allowing default access for local setup without auth filters
+    // Default access for local setup
 });
-
-app.UseAuthorization();
 
 app.MapControllers();
 

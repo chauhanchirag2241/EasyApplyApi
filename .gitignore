@@ -1,0 +1,21 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## VS
+.vs/
+
+## User secrets
+appsettings.json
+appsettings.Development.json
+
+## Uploads (user data)
+Uploads/
+
+## OS
+.DS_Store
+Thumbs.db

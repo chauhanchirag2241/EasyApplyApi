@@ -1,4 +1,4 @@
-using Microsoft.Azure.Cosmos;
+﻿using Microsoft.Azure.Cosmos;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -6,12 +6,22 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 
-// Cosmos DB setup
-var cosmosEndpoint = builder.Configuration["CosmosDb:EndpointUri"]!;
-var cosmosKey = builder.Configuration["CosmosDb:PrimaryKey"]!;
-var cosmosDbName = builder.Configuration["CosmosDb:DatabaseName"]!;
-var containerName = builder.Configuration["CosmosDb:ContainerName"]!;
+// 🔥 Cosmos DB setup (SAFE)
+var cosmosEndpoint = builder.Configuration["CosmosDb:EndpointUri"];
+var cosmosKey = builder.Configuration["CosmosDb:PrimaryKey"];
+var cosmosDbName = builder.Configuration["CosmosDb:DatabaseName"];
+var containerName = builder.Configuration["CosmosDb:ContainerName"];
 
+// ✅ Validate config (better error instead of crash)
+if (string.IsNullOrEmpty(cosmosEndpoint) ||
+    string.IsNullOrEmpty(cosmosKey) ||
+    string.IsNullOrEmpty(cosmosDbName) ||
+    string.IsNullOrEmpty(containerName))
+{
+    throw new Exception("Cosmos DB configuration missing in Azure App Settings");
+}
+
+// ✅ Create Cosmos client ONLY (no DB calls here)
 var cosmosClient = new CosmosClient(cosmosEndpoint, cosmosKey, new CosmosClientOptions
 {
     SerializerOptions = new CosmosSerializationOptions
@@ -21,25 +31,12 @@ var cosmosClient = new CosmosClient(cosmosEndpoint, cosmosKey, new CosmosClientO
 });
 
 builder.Services.AddSingleton(cosmosClient);
+
+// ✅ Register services
 builder.Services.AddTransient<EasyApplyAPI.Services.IEmailService, EasyApplyAPI.Services.EmailService>();
 builder.Services.AddTransient<EasyApplyAPI.Services.IEmailProcessorService, EasyApplyAPI.Services.EmailProcessorService>();
 
-var databaseResp = await cosmosClient.CreateDatabaseIfNotExistsAsync(cosmosDbName);
-await databaseResp.Database.CreateContainerIfNotExistsAsync(id: containerName, partitionKeyPath: "/id", throughput: 400);
-
-// **CORS policy for Angular frontend**
-//builder.Services.AddCors(options =>
-//{
-//    options.AddPolicy("AllowAngularApp", policy =>
-//    {
-//        policy.WithOrigins(
-//            "http://localhost:4200", // local dev
-//            "https://jolly-mushroom-0f9150400.1.azurestaticapps.net" // deployed Angular
-//        )
-//        .AllowAnyHeader()
-//        .AllowAnyMethod();
-//    });
-//});
+// ✅ CORS (for Angular)
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAngularApp", policy =>
@@ -52,16 +49,11 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Development tools
-if (app.Environment.IsDevelopment())
-{
-    app.MapOpenApi();
-}
+// Development tools (Swagger)
+app.MapOpenApi(); // keep enabled for testing
 
-// **Order matters here**
 app.UseHttpsRedirection();
 
-// **CORS MUST come before Authorization and endpoint mapping**
 app.UseCors("AllowAngularApp");
 
 app.UseAuthorization();

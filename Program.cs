@@ -4,7 +4,8 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add services
 builder.Services.AddControllers();
-builder.Services.AddOpenApi();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
 
 // 🔥 Cosmos DB setup (SAFE)
 var cosmosEndpoint = builder.Configuration["CosmosDb:EndpointUri"];
@@ -50,7 +51,11 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 
 // Development tools (Swagger)
-app.MapOpenApi(); // keep enabled for testing
+// if (app.Environment.IsDevelopment())
+// {
+    app.UseSwagger();
+    app.UseSwaggerUI();
+//}
 
 app.UseHttpsRedirection();
 

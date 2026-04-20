@@ -1,6 +1,8 @@
 using MimeKit;
 using MailKit.Net.Smtp;
 using MailKit.Security;
+using Microsoft.Extensions.Caching.Memory;
+using System.IO;
 
 namespace EasyApplyAPI.Services
 {
@@ -13,11 +15,15 @@ namespace EasyApplyAPI.Services
     {
         private readonly IConfiguration _configuration;
         private readonly ILogger<EmailService> _logger;
+        private readonly IMemoryCache _cache;
+        private readonly IBlobStorageService _blobService;
 
-        public EmailService(IConfiguration configuration, ILogger<EmailService> logger)
+        public EmailService(IConfiguration configuration, ILogger<EmailService> logger, IMemoryCache cache, IBlobStorageService blobService)
         {
             _configuration = configuration;
             _logger = logger;
+            _cache = cache;
+            _blobService = blobService;
         }
 
         public async Task SendEmailAsync(string toEmail, string subject, string body, string? attachmentPath)
@@ -59,16 +65,43 @@ namespace EasyApplyAPI.Services
             };
 
             // Attach file if exists
-            if (!string.IsNullOrEmpty(attachmentPath) && File.Exists(attachmentPath))
+            if (!string.IsNullOrEmpty(attachmentPath))
             {
-                var attachment = await builder.Attachments.AddAsync(attachmentPath);
-                
-                // Strip GUID prefix from filename for clean display
-                var fileName = Path.GetFileName(attachmentPath);
-                if (fileName.Length > 36 && fileName[36] == '_')
+                if (attachmentPath.StartsWith("http"))
                 {
-                    attachment.ContentDisposition.FileName = fileName.Substring(37);
-                    attachment.ContentType.Name = fileName.Substring(37);
+                    // Handle Azure Blob Storage URL with Caching
+                    var cacheKey = $"resume_{attachmentPath}";
+                    if (!_cache.TryGetValue(cacheKey, out (byte[] content, string contentType) fileData))
+                    {
+                        _logger.LogInformation("Downloading resume from Azure for the first time: {Url}", attachmentPath);
+                        fileData = await _blobService.DownloadFileAsync(attachmentPath);
+                        
+                        // Cache for 10 minutes
+                        _cache.Set(cacheKey, fileData, TimeSpan.FromMinutes(10));
+                    }
+
+                    builder.Attachments.Add(Path.GetFileName(attachmentPath), fileData.content, ContentType.Parse(fileData.contentType));
+                    
+                    // Clean up filename for the attachment if it has GUID
+                    var lastAttachment = builder.Attachments.Last();
+                    var fileName = lastAttachment.ContentType.Name;
+                    if (fileName.Length > 36 && fileName[36] == '_')
+                    {
+                        var cleanName = fileName.Substring(37);
+                        lastAttachment.ContentType.Name = cleanName;
+                        lastAttachment.ContentDisposition.FileName = cleanName;
+                    }
+                }
+                else if (File.Exists(attachmentPath))
+                {
+                    // Handle local file path (fallback/backward compatibility)
+                    var attachment = await builder.Attachments.AddAsync(attachmentPath);
+                    var fileName = Path.GetFileName(attachmentPath);
+                    if (fileName.Length > 36 && fileName[36] == '_')
+                    {
+                        attachment.ContentDisposition.FileName = fileName.Substring(37);
+                        attachment.ContentType.Name = fileName.Substring(37);
+                    }
                 }
             }
 

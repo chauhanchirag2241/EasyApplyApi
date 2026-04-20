@@ -11,11 +11,13 @@ namespace EasyApplyAPI.Controllers
     {
         private readonly CosmosClient _cosmosClient;
         private readonly IConfiguration _configuration;
+        private readonly EasyApplyAPI.Services.IBlobStorageService _blobService;
 
-        public CampaignsController(CosmosClient cosmosClient, IConfiguration configuration)
+        public CampaignsController(CosmosClient cosmosClient, IConfiguration configuration, EasyApplyAPI.Services.IBlobStorageService blobService)
         {
             _cosmosClient = cosmosClient;
             _configuration = configuration;
+            _blobService = blobService;
         }
 
         private Container GetContainer() => _cosmosClient.GetContainer(
@@ -132,19 +134,15 @@ namespace EasyApplyAPI.Controllers
         [HttpPost("resume")]
         public async Task<IActionResult> UploadResume(IFormFile file)
         {
-            if (file == null || file.Length == 0) return BadRequest("File is empty");
-
-            var uploadsPath = Path.Combine(Directory.GetCurrentDirectory(), "Uploads");
-            if (!Directory.Exists(uploadsPath)) Directory.CreateDirectory(uploadsPath);
-
-            var safeFileName = Path.GetFileName(file.FileName);
-            var filePath = Path.Combine(uploadsPath, Guid.NewGuid() + "_" + safeFileName);
-            using (var stream = new FileStream(filePath, FileMode.Create))
+            try
             {
-                await file.CopyToAsync(stream);
+                var fileUrl = await _blobService.UploadFileAsync(file);
+                return Ok(new { ResumeFilePath = fileUrl });
             }
-
-            return Ok(new { ResumeFilePath = filePath });
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
         }
     }
 }
